@@ -1,0 +1,22 @@
+# ── Python ────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# ── Virtual-envs ──────────────────────────
+venv/
+.env/
+
+# ── IDEs ───────────────────────────────────
+.vscode/
+.idea/
+
+# ── OS files ──────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Secrets / local settings ──────────────
+.env.*        # if you keep env vars here
+*.sqlite3     # in case you test with sqlite
