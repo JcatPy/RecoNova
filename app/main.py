@@ -9,5 +9,9 @@ app = FastAPI()
 def on_startup():
     create_db_and_tables()
 
+
 app.include_router(videos.router)
+app.include_router(user.router)
+app.include_router(interactions.router)
+
 

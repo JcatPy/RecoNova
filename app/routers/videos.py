@@ -5,7 +5,7 @@ from app.database import get_session
 from ..schemas import VideoCreate, VideoRead
 from ..crud import create_video, get_video_by_id, delete_video, list_videos
 
-router = APIRouter(tags=["api"])
+router = APIRouter(tags=["videos"])
 
 @router.post("/videos", response_model=VideoRead, status_code=201)
 def upload_video(
@@ -37,6 +37,8 @@ def remove_video(video_id: int, db: Session = Depends(get_session)):
     if not delete_video(db, video_id):
         raise HTTPException(404, "Video not found")
     return {"detail": "Video deleted successfully"}
+
+
 
 
 
