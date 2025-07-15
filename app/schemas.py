@@ -6,8 +6,18 @@ from pydantic import conint
 
 
 class UserCreate(SQLModel):
-    email: str
+    email: EmailStr
     password: str
+    full_name: Optional[str] = None
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
 
 class VideoBase(SQLModel):
     title: str

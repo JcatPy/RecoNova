@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlmodel import Session, select, col
 from .models import User, Video, Interaction
 from .schemas import UserCreate
+from .utils import hash_password
 
 
 '''-----------Helper functions for CRUD operations on User, Video, and Interaction models-----------'''
@@ -23,8 +24,8 @@ def list_users(db: Session, skip: int = 0, limit: int = 20) -> List[User]:
     return db.exec(stmt).all()
 
 def create_user(db: Session, user: UserCreate) -> User:
-    """Create a new user."""
-    db_user = User(email=user.email, hashed_password=user.password)  # Assuming password is hashed before passing
+    hashed_password = hash_password(user.password)
+    db_user = User(email=user.email, hashed_password=hashed_password, full_name=user.full_name)  # Assuming password is hashed before passing
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
