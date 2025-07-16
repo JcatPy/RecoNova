@@ -13,5 +13,6 @@ def on_startup():
 app.include_router(videos.router)
 app.include_router(user.router)
 app.include_router(interactions.router)
+app.include_router(auth.router)
 
 
