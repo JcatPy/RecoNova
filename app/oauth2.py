@@ -33,13 +33,3 @@ def verify_access_token(token: str, credentials_exception):
     return token_data
 
 # Get the current user from the token
-def get_current_user(token: str= Depends(oauth2_scheme), session: Session = Depends(get_session)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    token_data = verify_access_token(token, credentials_exception)
-    user = session.get(User, token_data.id)
-    return user if user else None

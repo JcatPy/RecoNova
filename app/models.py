@@ -10,6 +10,7 @@ class User(SQLModel, table=True):
     email: str = Field(index=True, unique=True)
     hashed_password: str
     full_name: Optional[str] = None
+    is_admin: bool = Field(default=False)
 
     interactions: List["Interaction"] = Relationship(back_populates="user")
 

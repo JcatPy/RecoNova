@@ -4,6 +4,7 @@ from sqlmodel import Session
 from app.database import get_session
 from ..schemas import UserCreate, UserOut
 from ..crud import create_user, list_users, get_user_by_id, get_user_by_email
+from ..deps import require_admin, ensure_self_or_admin
 
 router = APIRouter(tags=["Users"])
 
@@ -20,12 +21,14 @@ def register_user(user: UserCreate, db: Session = Depends(get_session)):
 
 @router.get("/users", response_model=List[UserCreate])
 def list_users(skip: int = 0, limit: int = 20,
+               _admin = Depends(require_admin),
                db: Session = Depends(get_session)):
     return list_users(db, skip, limit)
 
 
 @router.get("/users/{user_id}", response_model=UserCreate)
 def get_user_profile(user_id: int,
+                     _ = Depends(ensure_self_or_admin),  # Ensure the user is either the owner or an admin
                      db: Session = Depends(get_session)):
     user = get_user_by_id(db, user_id)
     if not user:
