@@ -1,10 +1,6 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
 from fastapi.security import OAuth2PasswordBearer
-from fastapi import Depends, HTTPException, status
-from sqlmodel import Session
-from .database import get_session
-from .models import User
 from .schemas import TokenData
 
 
@@ -32,4 +28,3 @@ def verify_access_token(token: str, credentials_exception):
         raise credentials_exception
     return token_data
 
-# Get the current user from the token

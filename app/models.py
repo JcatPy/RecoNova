@@ -21,6 +21,7 @@ class User(SQLModel, table=True):
 
 class Video(SQLModel, table=True):
     id:   Optional[int] = Field(default=None, primary_key=True)
+    pixabay_id: int = Field(unique=True, index=True)
     title: str
     description: Optional[str] = None
     url: str
