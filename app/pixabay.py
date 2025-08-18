@@ -1,84 +1,120 @@
-import time, math, requests
-from datetime import datetime
-from typing import List, Optional
-from sqlmodel import SQLModel, Session, create_engine, select
-from .models import Video
-from .database import engine
+import os
+import time
+import argparse
+from pathlib import Path
+from typing import Iterable
 
+import requests
+from sqlmodel import Session
+from app.database import engine
+from app.schemas import VideoCreate
+from app.crud import create_or_update_video
 
-API_KEY = '51420264-ec5b2faae87adadaebb8986bd'
+MEDIA_ROOT = Path("/var/app/media")
+THUMBS_DIR = MEDIA_ROOT / "thumbs"
+CLIPS_DIR  = MEDIA_ROOT / "clips"
 
-BASE_URL     = "https://pixabay.com/api/videos/"
-PER_PAGE     = 200
-CATEGORIES   = ["nature", "animals", "technology", "sports", "people", "travel", "music"]
-MAX_CLIPS    = 5000
-MAX_BYTES    = 5 * 1024**3
-SLEEP_SECS   = 1
+PIXABAY_API_KEY = 'getenv("PIXABAY_API_KEY", "").strip()'
 
-def get_page(category: str, page: int):
+def ensure_dirs():
+    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+
+def _download(url: str, dest: Path, retries: int = 3, timeout: int = 30) -> None:
+    for attempt in range(retries):
+        r = requests.get(url, stream=True, timeout=timeout)
+        if r.status_code == 200:
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            return
+        time.sleep(1 + attempt)
+    raise RuntimeError(f"Failed to download {url} -> {dest}")
+
+def _safe_name(px_id: int, ext: str) -> str:
+    return f"{px_id}{ext}"
+
+def choose_small_rendition(videos_obj: dict) -> str:
+    # videos: { "large": {...}, "medium": {...}, "small": {...}, "tiny": {...} }
+    for key in ("tiny", "small", "medium", "large"):
+        if key in videos_obj and "url" in videos_obj[key]:
+            return videos_obj[key]["url"]
+    raise ValueError("No usable video URL in Pixabay response")
+
+def fetch_pixabay_page(query: str, page: int, per_page: int = 20) -> dict:
+    if not PIXABAY_API_KEY:
+        raise RuntimeError("Set PIXABAY_API_KEY environment variable")
     params = {
-        "key": API_KEY,
-        "category": category,
-        "per_page": PER_PAGE,
+        "key": PIXABAY_API_KEY,
+        "q": query,
         "page": page,
+        "per_page": per_page,
+        "safesearch": "true",
+        "video_type": "all",
+        "lang": "en",
     }
-    r = requests.get(BASE_URL, params=params, timeout=30)
+    url = "https://pixabay.com/api/videos/"
+    r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
-    return r.json()["hits"], r.json()["totalHits"]
+    return r.json()
 
-def tiny_to_video(hit: dict, category: str) -> tuple[Video, int]:
-    tiny  = hit["videos"]["tiny"]
-    size  = tiny["size"]          # bytes
-    video = Video(
-        pixabay_id = hit["id"],
-        title = f"{category}-{hit['id']}",
-        description  = hit["tags"],
-        url = tiny["url"]
-    )
-    return video, size
+def iterate_hits(query: str, pages: int, per_page: int) -> Iterable[dict]:
+    for p in range(1, pages + 1):
+        data = fetch_pixabay_page(query, p, per_page)
+        for hit in data.get("hits", []):
+            yield hit
 
-def ingest():
-    total_clips = 0
-    total_bytes = 0
+def ingest_query(query: str, pages: int = 1, per_page: int = 20) -> int:
+    ensure_dirs()
+    imported = 0
+    with Session(engine) as db:
+        for hit in iterate_hits(query, pages, per_page):
+            px_id = int(hit["id"])
+            title = hit.get("tags") or f"Pixabay {px_id}"
+            description = f'By {hit.get("user")}' if hit.get("user") else None
 
-    with Session(engine) as session:
-        for cat in CATEGORIES:
-            page = 1
-            while total_clips < MAX_CLIPS and total_bytes < MAX_BYTES:
-                hits, total_hits = get_page(cat, page)
-                if not hits:
-                    break
+            # Thumbnail: prefer previewURL
+            thumb_remote = hit.get("previewURL")
+            # Clip: choose the smallest reasonable rendition
+            clip_remote = choose_small_rendition(hit["videos"])
 
-                for hit in hits:
-                    if session.exec(
-                            select(Video.id).where(Video.pixabay_id == hit["id"])
-                    ).first():
-                        continue
+            # Local filenames
+            thumb_name = _safe_name(px_id, ".jpg")
+            clip_name  = _safe_name(px_id, ".mp4")
 
-                    video, size = tiny_to_video(hit, cat)
+            thumb_dest = THUMBS_DIR / thumb_name
+            clip_dest  = CLIPS_DIR / clip_name
 
-                    if (total_clips + 1) > MAX_CLIPS or (total_bytes + size) > MAX_BYTES:
-                        session.commit()
-                        return
+            # Download only if missing (idempotent)
+            if thumb_remote and not thumb_dest.exists():
+                _download(thumb_remote, thumb_dest)
+            if clip_remote and not clip_dest.exists():
+                _download(clip_remote, clip_dest)
 
-                    session.add(video)
-                    total_clips += 1
-                    total_bytes += size
+            # Local URLs served by FastAPI/Nginx
+            local_thumb_url = f"/media/thumbs/{thumb_name}"
+            local_clip_url  = f"/media/clips/{clip_name}"
 
-                session.commit()
+            payload = VideoCreate(
+                pixabay_id=px_id,
+                title=title,
+                description=description,
+                source_url=local_clip_url,
+                thumb_url=local_thumb_url,
+            )
+            create_or_update_video(db, payload)
+            imported += 1
+    return imported
 
-                max_pages = math.ceil(total_hits/ PER_PAGE)
-                if page >= max_pages:
-                    break
-
-                page += 1
-                time.sleep(SLEEP_SECS)
-
-                if total_clips >= MAX_CLIPS or total_bytes >= MAX_BYTES:
-                    break
-
-    print(f"stored {total_clips} clips  |  {total_bytes/1024/1024:.1f} MB")
-
+def main():
+    parser = argparse.ArgumentParser(description="Import Pixabay videos")
+    parser.add_argument("--query", required=True, help="Search term (e.g., 'nature')")
+    parser.add_argument("--pages", type=int, default=1)
+    parser.add_argument("--per-page", type=int, default=20)
+    args = parser.parse_args()
+    n = ingest_query(args.query, args.pages, args.per_page)
+    print(f"Imported/updated {n} items for query='{args.query}'")
 
 if __name__ == "__main__":
-    ingest()
+    main()
