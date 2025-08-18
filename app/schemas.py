@@ -1,11 +1,36 @@
+from __future__ import annotations
 from datetime import datetime
 from typing import Optional
-from sqlmodel import SQLModel
-from pydantic import EmailStr, BaseModel
-from pydantic import conint
+from pydantic import BaseModel, EmailStr
+from enum import Enum
+
+class ActionEnum(str, Enum):
+    view = "view"
+    like = "like"
+    complete = "complete"
+    bookmark = "bookmark"
+    share = "share"
 
 
-class UserCreate(SQLModel):
+# -------------------
+# Auth / Tokens
+# -------------------
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    id: Optional[str] = None
+
+
+# -------------------
+# Users
+# -------------------
+class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
@@ -14,45 +39,43 @@ class UserOut(BaseModel):
     id: int
     email: EmailStr
     full_name: Optional[str] = None
+    is_admin: bool = False
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # Pydantic v2: ORM mode
 
-class UserLogin(SQLModel):
-    email: EmailStr
-    password: str
 
-class Token(SQLModel):
-    access_token: str
-    token_type: str
-
-class TokenData(SQLModel):
-    id: Optional[str] = None
-
-class VideoBase(SQLModel):
+# -------------------
+# Videos
+# -------------------
+class VideoCreate(BaseModel):
+    pixabay_id: int
     title: str
     description: Optional[str] = None
-    url: str
+    source_url: str                 # e.g., "/media/clips/12345.mp4"
+    thumb_url: Optional[str] = None # e.g., "/media/thumbs/12345.jpg"
 
-class VideoCreate(VideoBase):
-    pass                                          # same fields as base
-
-class VideoRead(VideoBase):
+class VideoRead(VideoCreate):
     id: int
     uploaded_at: datetime
+
     class Config:
         from_attributes = True
 
 
-class InteractionCreate(SQLModel):
+# -------------------
+# Interactions
+# -------------------
+class InteractionCreate(BaseModel):
     video_id: int
-    action: str                                   # "watch", "like", …
+    action: ActionEnum              # safer than raw str
 
-class InteractionRead(SQLModel):
+class InteractionRead(BaseModel):
     id: int
     user_id: int
     video_id: int
-    action: str
+    action: ActionEnum
     timestamp: datetime
+
     class Config:
         from_attributes = True

@@ -8,6 +8,7 @@ from ..deps import require_admin, ensure_self_or_admin
 
 router = APIRouter(tags=["Users"])
 
+
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register_user(user: UserCreate, db: Session = Depends(get_session)):
     # Check if user already exists
@@ -19,17 +20,23 @@ def register_user(user: UserCreate, db: Session = Depends(get_session)):
     new_user = create_user(db, user)
     return new_user
 
-@router.get("/users", response_model=List[UserCreate])
-def list_users(skip: int = 0, limit: int = 20,
-               _admin = Depends(require_admin),
-               db: Session = Depends(get_session)):
+
+@router.get("/users", response_model=List[UserOut])
+def list_users(
+    skip: int = 0,
+    limit: int = 20,
+    _admin = Depends(require_admin),
+    db: Session = Depends(get_session),
+):
     return list_users(db, skip, limit)
 
 
-@router.get("/users/{user_id}", response_model=UserCreate)
-def get_user_profile(user_id: int,
-                     _ = Depends(ensure_self_or_admin),  # Ensure the user is either the owner or an admin
-                     db: Session = Depends(get_session)):
+@router.get("/users/{user_id}", response_model=UserOut)
+def get_user_profile(
+    user_id: int,
+    _ = Depends(ensure_self_or_admin),  # Ensure the user is either the owner or an admin
+    db: Session = Depends(get_session),
+):
     user = get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")

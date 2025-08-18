@@ -6,14 +6,14 @@ from .models import Video
 from .database import engine
 
 
-API_KEY = 'API_KEY_HERE'
+API_KEY = '51420264-ec5b2faae87adadaebb8986bd'
 
 BASE_URL     = "https://pixabay.com/api/videos/"
 PER_PAGE     = 200
 CATEGORIES   = ["nature", "animals", "technology", "sports", "people", "travel", "music"]
 MAX_CLIPS    = 5000
 MAX_BYTES    = 5 * 1024**3
-SLEEP_SECS   = 1                # free tier: 5 req/sec
+SLEEP_SECS   = 1
 
 def get_page(category: str, page: int):
     params = {
