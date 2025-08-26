@@ -1,5 +1,5 @@
 from sqlmodel import Session, SQLModel, create_engine
-from app.models import User, Video, Interaction
+import app.models
 
 sql_alchemy_database_url = f"postgresql+psycopg2://postgres:Student%40eacc18@localhost:3453/reconova"
 

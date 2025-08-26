@@ -1,20 +1,32 @@
-import os
 import time
 import argparse
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Tuple, Optional
 
 import requests
 from sqlmodel import Session
 from app.database import engine
 from app.schemas import VideoCreate
 from app.crud import create_or_update_video
+import math
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# one shared session with retries (handles 429/5xx gracefully)
+_session = requests.Session()
+_adapter = HTTPAdapter(max_retries=Retry(
+    total=3, backoff_factor=0.5,
+    status_forcelist=(429, 500, 502, 503, 504)
+))
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
 MEDIA_ROOT = Path("/var/app/media")
 THUMBS_DIR = MEDIA_ROOT / "thumbs"
 CLIPS_DIR  = MEDIA_ROOT / "clips"
 
-PIXABAY_API_KEY = 'getenv("PIXABAY_API_KEY", "").strip()'
+PIXABAY_API_KEY = '51420264-ec5b2faae87adadaebb8986bd'
 
 def ensure_dirs():
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,12 +47,46 @@ def _download(url: str, dest: Path, retries: int = 3, timeout: int = 30) -> None
 def _safe_name(px_id: int, ext: str) -> str:
     return f"{px_id}{ext}"
 
-def choose_small_rendition(videos_obj: dict) -> str:
-    # videos: { "large": {...}, "medium": {...}, "small": {...}, "tiny": {...} }
+# NEW: pick clip + thumb together from the smallest reasonable rendition
+def choose_clip_and_thumb(videos_obj: dict) -> Tuple[str, Optional[str]]:
+    """
+    Return (clip_url, thumb_url) preferring tiny→small→medium→large.
+    Some responses may omit 'thumbnail'; caller should handle None.
+    """
+    first_thumb = None
+    # capture any thumbnail we see while scanning, to use as fallback
+    for d in videos_obj.values():
+        if isinstance(d, dict) and d.get("thumbnail") and not first_thumb:
+            first_thumb = d["thumbnail"]
+
     for key in ("tiny", "small", "medium", "large"):
-        if key in videos_obj and "url" in videos_obj[key]:
-            return videos_obj[key]["url"]
+        data = videos_obj.get(key)
+        if data and data.get("url"):
+            clip = data["url"]
+            thumb = data.get("thumbnail") or first_thumb
+            return clip, thumb
+
     raise ValueError("No usable video URL in Pixabay response")
+
+# OPTIONAL: last-resort builder if API lacks thumbnail but has picture_id
+def build_thumb_from_picture_id(hit: dict, w: int = 640, h: int = 360) -> Optional[str]:
+    pid = hit.get("picture_id")
+    if pid:
+        # standard Vimeo CDN pattern used by Pixabay video thumbs
+        return f"https://i.vimeocdn.com/video/{pid}_{w}x{h}.jpg"
+    return None
+
+def _respect_rate_limit(resp):
+    # Pixabay returns these (case-insensitive)
+    try:
+        remaining = int(resp.headers.get("X-RateLimit-Remaining", "100"))
+        reset = int(resp.headers.get("X-RateLimit-Reset", "0"))
+    except ValueError:
+        return
+    if remaining <= 1:
+        # sleep until the window resets (plus a tiny buffer)
+        time.sleep(reset + 1)
+
 
 def fetch_pixabay_page(query: str, page: int, per_page: int = 20) -> dict:
     if not PIXABAY_API_KEY:
@@ -57,13 +103,24 @@ def fetch_pixabay_page(query: str, page: int, per_page: int = 20) -> dict:
     url = "https://pixabay.com/api/videos/"
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
+    _respect_rate_limit(r)
     return r.json()
 
 def iterate_hits(query: str, pages: int, per_page: int) -> Iterable[dict]:
-    for p in range(1, pages + 1):
+    first = fetch_pixabay_page(query, 1, per_page)
+    for hit in first.get("hits", []):
+        yield hit
+
+    # API exposes totalHits but returns max 500 per query → don’t over-fetch
+    total_hits = min(int(first.get("totalHits", 0)), 500)
+    pages_total = max(1, math.ceil(total_hits / per_page))
+    pages_to_fetch = min(pages, pages_total)
+
+    for p in range(2, pages_to_fetch + 1):
         data = fetch_pixabay_page(query, p, per_page)
         for hit in data.get("hits", []):
             yield hit
+
 
 def ingest_query(query: str, pages: int = 1, per_page: int = 20) -> int:
     ensure_dirs()
@@ -74,10 +131,11 @@ def ingest_query(query: str, pages: int = 1, per_page: int = 20) -> int:
             title = hit.get("tags") or f"Pixabay {px_id}"
             description = f'By {hit.get("user")}' if hit.get("user") else None
 
-            # Thumbnail: prefer previewURL
-            thumb_remote = hit.get("previewURL")
-            # Clip: choose the smallest reasonable rendition
-            clip_remote = choose_small_rendition(hit["videos"])
+            # UPDATED: get clip & thumb from video renditions (not previewURL)
+            clip_remote, thumb_remote = choose_clip_and_thumb(hit["videos"])
+            if not thumb_remote:
+                # fallback to previewURL if present, else build from picture_id
+                thumb_remote = hit.get("previewURL") or build_thumb_from_picture_id(hit)
 
             # Local filenames
             thumb_name = _safe_name(px_id, ".jpg")
@@ -93,7 +151,7 @@ def ingest_query(query: str, pages: int = 1, per_page: int = 20) -> int:
                 _download(clip_remote, clip_dest)
 
             # Local URLs served by FastAPI/Nginx
-            local_thumb_url = f"/media/thumbs/{thumb_name}"
+            local_thumb_url = f"/media/thumbs/{thumb_name}" if thumb_remote else None
             local_clip_url  = f"/media/clips/{clip_name}"
 
             payload = VideoCreate(

@@ -7,7 +7,7 @@ from typing import List, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from .models import User, Video, Interaction, ActionEnum
+from .models import User, Video , Interaction, ActionEnum
 from .schemas import UserCreate, VideoCreate
 from .utils import hash_password
 

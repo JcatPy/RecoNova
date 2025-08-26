@@ -1,11 +1,9 @@
-from __future__ import annotations
-
+# app/models.py
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Optional, List
 
-from sqlmodel import SQLModel, Field, Relationship, Column
-from sqlalchemy import Enum as SAEnum, UniqueConstraint, Index, ForeignKey
+from sqlmodel import SQLModel, Field, Relationship
 
 
 class User(SQLModel, table=True):
@@ -17,28 +15,24 @@ class User(SQLModel, table=True):
     full_name: Optional[str] = None
     is_admin: bool = Field(default=False)
 
-    # relationships
-    interactions: List["Interaction"] = Relationship(back_populates="user")
-
+    interactions: list["Interaction"] = Relationship(back_populates="user")
     class Config:
         from_attributes = True
 
 
 class Video(SQLModel, table=True):
-    __tablename__ = "video"  # keep in sync with foreign_key targets
+    __tablename__ = "video"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     pixabay_id: int = Field(unique=True, index=True)
     title: str
     description: Optional[str] = None
 
-    # These are LOCAL URLs you’ll serve from FastAPI/Nginx (e.g., /media/thumbs/123.jpg)
+    # Local URLs (e.g., /media/clips/..., /media/thumbs/...)
     source_url: str = Field(index=True)
     thumb_url: Optional[str] = None
 
     uploaded_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-
-    # relationships
     interactions: List["Interaction"] = Relationship(back_populates="video")
 
     class Config:
@@ -56,39 +50,15 @@ class ActionEnum(str, Enum):
 class Interaction(SQLModel, table=True):
     __tablename__ = "interactions"
 
-    # One row per (user, video, action). If you need counts of repeated views,
-    # we’ll store them as separate rows later or add a counter column.
-    __table_args__ = (
-        UniqueConstraint("user_id", "video_id", "action", name="uq_user_video_action"),
-        Index("ix_interactions_video_action", "video_id", "action"),
-        Index("ix_interactions_user_ts", "user_id", "timestamp"),
-    )
-
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    # ON DELETE CASCADE to keep data tidy when a user or video is removed
-    user_id: int = Field(
-        sa_column=Column(
-            ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
-        )
-    )
-    video_id: int = Field(
-        sa_column=Column(
-            ForeignKey("video.id", ondelete="CASCADE"),
-            nullable=False,
-        )
-    )
+    # Foreign keys only; no relationship() / Relationship()
+    user_id: int = Field(foreign_key="users.id", index=True)
+    video_id: int = Field(foreign_key="video.id", index=True)
 
-    action: ActionEnum = Field(
-        sa_column=Column(
-            SAEnum(ActionEnum, name="action_enum"),
-            nullable=False,
-        )
-    )
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    action: ActionEnum
+    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
 
-    # back-refs (many-to-one)
     user: Optional[User] = Relationship(back_populates="interactions")
     video: Optional[Video] = Relationship(back_populates="interactions")
 
